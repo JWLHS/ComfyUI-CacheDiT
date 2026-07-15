@@ -18,7 +18,7 @@ All variants use the same cache wrapper — only warmup/skip parameters differ.
 from __future__ import annotations
 import logging
 import time
-import traces
+import traceback
 import torch
 import comfy.model_patcher
 import comfy.patcher_extension
