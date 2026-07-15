@@ -202,6 +202,32 @@ MODEL_PRESETS: Dict[str, ModelPreset] = {
     # ),
     
     # =========================================================================
+    # Krea2 Series — standard DiT (Pattern_1, single-stream)
+    # =========================================================================
+    "Krea2": ModelPreset(
+        name="Krea2",
+        description="Krea2 Turbo (8-9 steps, distilled)",
+        description_cn="Krea2 Turbo (蒸馏版, 8-9步)",
+        forward_pattern="Pattern_1",
+        fn_blocks=4, bn_blocks=0, threshold=0.15,
+        max_warmup_steps=3,
+        enable_separate_cfg=True, cfg_compute_first=False,
+        skip_interval=2, noise_scale=0.0,
+        default_strategy="adaptive", taylor_order=1,
+    ),
+    "Krea2-Base": ModelPreset(
+        name="Krea2-Base",
+        description="Krea2 Base (20-30 steps)",
+        description_cn="Krea2 Base (标准版, 20-30步)",
+        forward_pattern="Pattern_1",
+        fn_blocks=8, bn_blocks=0, threshold=0.12,
+        max_warmup_steps=10,
+        enable_separate_cfg=True, cfg_compute_first=False,
+        skip_interval=5, noise_scale=0.0,
+        default_strategy="adaptive", taylor_order=1,
+    ),
+
+    # =========================================================================
     # Custom / Fallback
     # =========================================================================
     "Custom": ModelPreset(
@@ -498,54 +524,48 @@ def build_block_adapter(
         
         # Log transformer info for debugging
         transformer_class = transformer.__class__.__module__ + "." + transformer.__class__.__name__
-        logger.info(f"[CacheDiT] Building BlockAdapter for: {transformer_class}")
+        logger.info(f"[CacheDiT] Building BlockAdapter for {transformer_class}")
         
-        # CRITICAL FIX: For ComfyUI models, manually extract and inject blocks
-        # This ensures cache-dit can find them when enable_cache(transformer) is called
-        manual_blocks = _manual_extract_blocks(transformer)
+        # Try auto-detection with BlockAdapter first
+        if auto_detect:
+            try:
+                block_adapter = BlockAdapter(
+                    transformer,
+                    forward_pattern=pattern,
+                )
+                
+                if block_adapter.transformer_blocks is not None and len(block_adapter.transformer_blocks) > 0:
+                    logger.info(f"[CacheDiT] ✓ Auto-detected {len(block_adapter.transformer_blocks)} blocks")
+                    return block_adapter
+            except Exception as e:
+                logger.info(f"[CacheDiT] Auto-detection failed: {e}")
         
-        if manual_blocks and len(manual_blocks) > 0:
-            logger.info(f"[CacheDiT] ✓ Manual extraction successful: {len(manual_blocks)} blocks")
+        # Manual extraction fallback
+        blocks = _manual_extract_blocks(transformer)
+        
+        if blocks is not None and len(blocks) > 0:
+            logger.info(f"[CacheDiT] ✓ Manual extraction: {len(blocks)} blocks")
             
-            # Store blocks in transformer for cache-dit to discover
-            # Use standard attribute names that cache-dit recognizes
-            if not hasattr(transformer, 'blocks'):
-                transformer.blocks = torch.nn.ModuleList(manual_blocks)
-                logger.info(f"[CacheDiT] Injected blocks into transformer.blocks")
+            # Create BlockAdapter with manually extracted blocks
+            block_adapter = BlockAdapter(
+                transformer,
+                forward_pattern=pattern,
+                transformer_blocks=blocks,
+            )
+            return block_adapter
+        else:
+            logger.warning("[CacheDiT] ⚠ No blocks found - cache may not work")
+            return BlockAdapter(
+                transformer,
+                forward_pattern=pattern,
+            )
             
-            # Create adapter for validation only
-            adapter = BlockAdapter(
-                transformer=transformer,
-                forward_pattern=pattern,
-                auto=True,  # Now it can auto-detect from transformer.blocks
-            )
-        else:
-            # Fallback to auto-detection (for diffusers models)
-            logger.info(f"[CacheDiT] Manual extraction failed, attempting auto-detection...")
-            adapter = BlockAdapter(
-                transformer=transformer,
-                forward_pattern=pattern,
-                auto=auto_detect,
-            )
-        
-        # Verify adapter was created successfully
-        if hasattr(adapter, 'blocks') and adapter.blocks:
-            logger.info(f"[CacheDiT] ✓ BlockAdapter created successfully with {len(adapter.blocks)} blocks")
-        else:
-            logger.error(f"[CacheDiT] ✗ BlockAdapter created but blocks list is empty!")
-            raise RuntimeError("BlockAdapter has no blocks - caching will not work")
-        
-        return adapter
-        
-    except Exception as e:
-        logger.error(f"[CacheDiT] Failed to build BlockAdapter: {e}")
-        import traceback
-        traceback.print_exc()
-        raise RuntimeError(f"Failed to build BlockAdapter for {transformer.__class__.__name__}: {e}")
+    except ImportError as e:
+        raise ImportError(f"Failed to build BlockAdapter: {e}")
 
 
 # =============================================================================
-# Summary Statistics & ASCII Dashboard
+# Summary Statistics Formatting
 # =============================================================================
 
 def format_summary_dashboard(
@@ -555,127 +575,56 @@ def format_summary_dashboard(
     config_info: Dict[str, Any],
 ) -> str:
     """
-    Format cache-dit summary statistics as an ASCII dashboard.
+    Format a rich ASCII dashboard for cache performance summary.
     
-    Returns a beautifully formatted string for terminal/log output.
+    Args:
+        stats: Statistics from get_summary_stats()
+        model_type: Model preset name
+        num_steps: Number of inference steps used
+        config_info: Configuration parameters for display
     """
-    if not stats:
-        width = 66
-        lines = []
-        lines.append("╔" + "═" * (width - 2) + "╗")
-        lines.append("║" + "CacheDiT Summary: No statistics available".center(width - 2) + "║")
-        lines.append("╠" + "═" + (width - 2) + "╣")
-        lines.append("║" + " Cache may not be active. Check:".ljust(width - 2) + "║")
-        lines.append("║" + "   1. Threshold may be too strict".ljust(width - 2) + "║")
-        lines.append("║" + "   2. Model may not support caching".ljust(width - 2) + "║")
-        lines.append("║" + "   3. Check logs for errors".ljust(width - 2) + "║")
-        lines.append("╚" + "═" * (width - 2) + "╝")
-        return "\n".join(lines)
+    lines = []
+    lines.append("")
+    lines.append("  ╔══════════════════════════════════════════════════════════╗")
+    lines.append(f"  ║  ⚡ CacheDiT Performance Dashboard{' ' * 27}║")
+    lines.append("  ╠══════════════════════════════════════════════════════════╣")
     
-    # Extract key metrics
-    total_steps = stats.get("total_steps", num_steps)
-    cached_steps = stats.get("cached_steps", 0)
-    computed_steps = stats.get("computed_steps", total_steps - cached_steps)
-    cache_hit_rate = (cached_steps / max(total_steps, 1)) * 100
+    # Model info
+    lines.append(f"  ║  Model      : {model_type:<42s}║")
+    lines.append(f"  ║  Steps      : {num_steps:<42d}║")
     
+    # Cache performance
+    total = stats.get("total_steps", 0)
+    cached = stats.get("cached_steps", 0)
+    computed = stats.get("computed_steps", 0)
+    speedup = stats.get("speedup", 1.0)
+    
+    cache_rate = (cached / max(total, 1)) * 100 if total > 0 else 0
+    lines.append("  ╠══════════════════════════════════════════════════════════╣")
+    lines.append(f"  ║  Total Steps     : {total:<38d}║")
+    lines.append(f"  ║  Computed Steps  : {computed:<38d}║")
+    lines.append(f"  ║  Cached Steps    : {cached:<38d}║")
+    lines.append(f"  ║  Cache Rate      : {cache_rate:>5.1f}%{' ' * 32}║")
+    lines.append(f"  ║  Effective Speedup: {speedup:>5.2f}x{' ' * 31}║")
+    
+    # Config info
+    lines.append("  ╠══════════════════════════════════════════════════════════╣")
+    for key, val in config_info.items():
+        if isinstance(val, float):
+            lines.append(f"  ║  {key:<17s}: {val:<37.3f}║")
+        else:
+            lines.append(f"  ║  {key:<17s}: {str(val):<37s}║")
+    
+    # Residual diff info
     avg_diff = stats.get("avg_residual_diff", 0.0)
     max_diff = stats.get("max_residual_diff", 0.0)
-    speedup = stats.get("speedup", total_steps / max(computed_steps, 1))
+    if avg_diff > 0:
+        lines.append("  ╠══════════════════════════════════════════════════════════╣")
+        lines.append(f"  ║  Avg Residual Diff : {avg_diff:<33.6f}║")
+        lines.append(f"  ║  Max Residual Diff : {max_diff:<33.6f}║")
     
-    # Build ASCII table
-    width = 66
-    lines = []
-    
-    # Header
-    lines.append("╔" + "═" * (width - 2) + "╗")
-    title = "CacheDiT Performance Dashboard"
-    lines.append("║" + title.center(width - 2) + "║")
-    lines.append("╠" + "═" * (width - 2) + "╣")
-    
-    # Model info section
-    lines.append("║" + f"  Model: {model_type}".ljust(width - 2) + "║")
-    lines.append("║" + f"  Pattern: {config_info.get('pattern', 'N/A')}".ljust(width - 2) + "║")
-    lines.append("║" + f"  Strategy: {config_info.get('strategy', 'N/A')}".ljust(width - 2) + "║")
-    lines.append("╠" + "─" * (width - 2) + "╣")
-    
-    # Performance metrics
-    lines.append("║" + "  📊 Performance Metrics".ljust(width - 2) + "║")
-    lines.append("║" + "─" * (width - 4) + "  ║")
-    
-    # Create metric rows
-    metrics = [
-        ("Total Steps", f"{total_steps}"),
-        ("Computed Steps", f"{computed_steps}"),
-        ("Cached Steps", f"{cached_steps}"),
-        ("Cache Hit Rate", f"{cache_hit_rate:.1f}%"),
-        ("Estimated Speedup", f"{speedup:.2f}x"),
-    ]
-    
-    for label, value in metrics:
-        row = f"  {label}:".ljust(25) + f"{value}".rjust(width - 29)
-        lines.append("║" + row + "║")
-    
-    lines.append("╠" + "─" * (width - 2) + "╣")
-    
-    # Quality metrics
-    lines.append("║" + "  Quality Metrics".ljust(width - 2) + "║")
-    lines.append("║" + "─" * (width - 4) + "  ║")
-    
-    quality_metrics = [
-        ("Threshold", f"{config_info.get('threshold', 0):.4f}"),
-        ("Avg Residual Diff", f"{avg_diff:.6f}"),
-        ("Max Residual Diff", f"{max_diff:.6f}"),
-        ("Fn/Bn Blocks", f"F{config_info.get('fn', 0)}B{config_info.get('bn', 0)}"),
-    ]
-    
-    for label, value in quality_metrics:
-        row = f"  {label}:".ljust(25) + f"{value}".rjust(width - 29)
-        lines.append("║" + row + "║")
-    
-    # Advanced settings if present
-    if config_info.get("skip_interval", 0) > 0 or config_info.get("noise_scale", 0) > 0:
-        lines.append("╠" + "─" * (width - 2) + "╣")
-        lines.append("║" + "   Advanced Settings".ljust(width - 2) + "║")
-        lines.append("║" + "─" * (width - 4) + "  ║")
-        
-        if config_info.get("skip_interval", 0) > 0:
-            row = f"  Skip Interval:".ljust(25) + f"{config_info['skip_interval']}".rjust(width - 29)
-            lines.append("║" + row + "║")
-        if config_info.get("noise_scale", 0) > 0:
-            row = f"  Noise Scale:".ljust(25) + f"{config_info['noise_scale']:.6f}".rjust(width - 29)
-            lines.append("║" + row + "║")
-        if config_info.get("taylor_order", 0) > 0:
-            row = f"  TaylorSeer Order:".ljust(25) + f"{config_info['taylor_order']}".rjust(width - 29)
-            lines.append("║" + row + "║")
-    
-    # Speedup visualization bar
-    lines.append("╠" + "─" * (width - 2) + "╣")
-    lines.append("║" + "  Speedup Visualization".ljust(width - 2) + "║")
-    
-    bar_width = width - 12
-    filled = int((speedup - 1.0) / 2.0 * bar_width)  # Scale 1x-3x to bar
-    filled = max(0, min(filled, bar_width))
-    bar = "█" * filled + "░" * (bar_width - filled)
-    lines.append("║" + f"  [{bar}]  ║")
-    lines.append("║" + f"  1.0x".ljust(bar_width // 2) + f"3.0x".rjust(bar_width // 2 + 6) + "  ║")
-    
-    # Footer with troubleshooting tips
-    lines.append("╠" + "═" * (width - 2) + "╣")
-    
-    # Add troubleshooting tips if cache hit rate is 0
-    if cache_hit_rate == 0 and total_steps > 0:
-        lines.append("║" + " TROUBLESHOOTING: Cache Hit Rate is 0%".center(width - 2) + "║")
-        lines.append("╠" + "─" * (width - 2) + "╣")
-        lines.append("║" + "  Possible fixes:".ljust(width - 2) + "║")
-        lines.append("║" + f"  • Increase threshold (current: {config_info.get('threshold', 0):.4f})".ljust(width - 2) + "║")
-        lines.append("║" + "  • Try threshold 0.15-0.25 for more caching".ljust(width - 2) + "║")
-        lines.append("║" + f"  • Reduce Fn blocks (current: F{config_info.get('fn', 0)})".ljust(width - 2) + "║")
-        lines.append("║" + "  • Check if blocks were detected (see logs)".ljust(width - 2) + "║")
-        lines.append("╠" + "═" * (width - 2) + "╣")
-    
-    tip = "💡 Lower threshold = better quality, less speedup"
-    lines.append("║" + tip.center(width - 2) + "║")
-    lines.append("╚" + "═" * (width - 2) + "╝")
+    lines.append("  ╚══════════════════════════════════════════════════════════╝")
+    lines.append("")
     
     return "\n".join(lines)
 

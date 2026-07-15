@@ -9,6 +9,9 @@ Supported Models (2026):
 - Qwen-Image Series (2511)
 - LTX-2 (T2V, I2V)
 - Z-Image / Z-Image-Turbo
+- Anima (anima_baseV10 / Anima Turbo)
+- Krea2 / Krea2-Base
+- Boogu / Boogu-Raw
 
 Features:
 - Adaptive/Static/Dynamic caching strategies
@@ -17,12 +20,12 @@ Features:
 - Automatic step detection and context refresh
 - Rich summary statistics with ASCII dashboard
 
-Repository: https://github.com/your-org/ComfyUI-CacheDiT
+Repository: https://github.com/Jasonzzt/ComfyUI-CacheDiT
 License: MIT
-Version: 2.0.0
+Version: 2.1.0
 """
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"
 __author__ = "ComfyUI-CacheDiT Contributors"
 
 from .nodes import NODE_CLASS_MAPPINGS as MAIN_NODE_CLASS_MAPPINGS
@@ -34,17 +37,27 @@ from .nodes_ltx2 import NODE_DISPLAY_NAME_MAPPINGS as LTX2_NODE_DISPLAY_NAME_MAP
 from .nodes_wan import NODE_CLASS_MAPPINGS as WAN_NODE_CLASS_MAPPINGS
 from .nodes_wan import NODE_DISPLAY_NAME_MAPPINGS as WAN_NODE_DISPLAY_NAME_MAPPINGS
 
+from .nodes_anima import NODE_CLASS_MAPPINGS as ANIMA_NODE_CLASS_MAPPINGS
+from .nodes_anima import NODE_DISPLAY_NAME_MAPPINGS as ANIMA_NODE_DISPLAY_NAME_MAPPINGS
+
+from .nodes_boogu import NODE_CLASS_MAPPINGS as BOOGU_NODE_CLASS_MAPPINGS
+from .nodes_boogu import NODE_DISPLAY_NAME_MAPPINGS as BOOGU_NODE_DISPLAY_NAME_MAPPINGS
+
 # Merge all nodes
 NODE_CLASS_MAPPINGS = {
     **MAIN_NODE_CLASS_MAPPINGS,
     **LTX2_NODE_CLASS_MAPPINGS,
     **WAN_NODE_CLASS_MAPPINGS,
+    **ANIMA_NODE_CLASS_MAPPINGS,
+    **BOOGU_NODE_CLASS_MAPPINGS,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     **MAIN_NODE_DISPLAY_NAME_MAPPINGS,
     **LTX2_NODE_DISPLAY_NAME_MAPPINGS,
     **WAN_NODE_DISPLAY_NAME_MAPPINGS,
+    **ANIMA_NODE_DISPLAY_NAME_MAPPINGS,
+    **BOOGU_NODE_DISPLAY_NAME_MAPPINGS,
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
